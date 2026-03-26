@@ -1,190 +1,202 @@
-// src/pages/dashboard/DashboardPage.jsx
-// Main subscriber dashboard — shows all key modules at a glance
+// src/pages/dashboard/ScoresPage.jsx
+// Score entry and management — rolling last 5
 
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { getScores, getUserDrawEntries, getMyVerifications } from '../../lib/supabase'
-import { Trophy, Heart, Target, Award, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react'
+import { getScores, addScore, deleteScore } from '../../lib/supabase'
+import { Plus, Trash2, Target, Info } from 'lucide-react'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
-const StatCard = ({ icon: Icon, label, value, sub, color, to }) => (
-  <Link to={to} className="card-glow p-5 group flex items-start gap-4">
-    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${color}`}>
-      <Icon size={18} className="text-white" />
-    </div>
-    <div className="flex-1 min-w-0">
-      <div className="text-xs font-body text-white/40 uppercase tracking-wide mb-1">{label}</div>
-      <div className="font-display text-2xl text-white">{value}</div>
-      {sub && <div className="text-xs font-body text-white/30 mt-0.5">{sub}</div>}
-    </div>
-    <ArrowRight size={14} className="text-white/20 group-hover:text-brand-400 transition-colors mt-1 shrink-0" />
-  </Link>
-)
+export default function ScoresPage() {
+  const { user } = useAuth()
+  const [scores, setScores]   = useState([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding]   = useState(false)
+  const [form, setForm]       = useState({ score: '', date: format(new Date(), 'yyyy-MM-dd'), notes: '' })
+  const [showForm, setShowForm] = useState(false)
 
-export default function DashboardPage() {
-  const { user, profile, subscription } = useAuth()
-  const [scores, setScores]       = useState([])
-  const [entries, setEntries]     = useState([])
-  const [verifications, setVerifications] = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [params]                  = useSearchParams()
+  const loadScores = async () => {
+    const { data } = await getScores(user.id)
+    setScores(data || [])
+    setLoading(false)
+  }
 
-  useEffect(() => {
-    // Show welcome toast on successful subscribe redirect
-    if (params.get('subscribed') === 'true') {
-      toast.success('🎉 Subscription activated! Welcome to ParScore.')
+  useEffect(() => { loadScores() }, [user])
+
+  const handleAdd = async (e) => {
+    e.preventDefault()
+    const scoreVal = parseInt(form.score)
+    if (isNaN(scoreVal) || scoreVal < 1 || scoreVal > 45) {
+      toast.error('Score must be between 1 and 45 (Stableford format)')
+      return
     }
-  }, [])
+    setAdding(true)
+    const { error } = await addScore(user.id, scoreVal, form.date, form.notes)
+    setAdding(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Score added!')
+    setForm({ score: '', date: format(new Date(), 'yyyy-MM-dd'), notes: '' })
+    setShowForm(false)
+    loadScores()
+  }
 
-  useEffect(() => {
-    if (!user) return
-    Promise.all([
-      getScores(user.id),
-      getUserDrawEntries(user.id),
-      getMyVerifications(user.id),
-    ]).then(([{ data: sc }, { data: en }, { data: ve }]) => {
-      setScores(sc || [])
-      setEntries(en || [])
-      setVerifications(ve || [])
-      setLoading(false)
-    })
-  }, [user])
+  const handleDelete = async (scoreId) => {
+    if (!confirm('Remove this score?')) return
+    const { error } = await deleteScore(scoreId, user.id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Score removed')
+    loadScores()
+  }
 
-  const totalWon   = verifications.filter(v => v.payout_status === 'paid')
-                                  .reduce((sum, v) => sum + (v.draw_entries?.prize_amount || 0), 0)
-  const pendingPay = verifications.filter(v => v.status === 'approved' && v.payout_status === 'pending').length
-  const nextDraw   = entries.find(e => e.draw_periods?.status === 'pending')
-
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="w-10 h-10 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  )
+  // Score quality helper
+  const getScoreLabel = (s) => {
+    if (s >= 36) return { label: 'Excellent', color: 'text-gold-400' }
+    if (s >= 28) return { label: 'Good',      color: 'text-brand-400' }
+    if (s >= 20) return { label: 'Average',   color: 'text-blue-400' }
+    return                { label: 'Below par', color: 'text-white/40' }
+  }
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-12">
-      {/* Welcome */}
-      <div className="mb-10">
-        <h1 className="font-display text-4xl text-white mb-1">
-          Hello, {profile?.full_name?.split(' ')[0] || 'Golfer'} 👋
-        </h1>
-        <p className="font-body text-white/40">Here's your ParScore overview</p>
+    <div className="max-w-2xl mx-auto px-4 py-12">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="font-display text-3xl text-white mb-1">Your Scores</h1>
+          <p className="font-body text-sm text-white/40">
+            Last 5 Stableford scores · Oldest auto-removed when 6th is added
+          </p>
+        </div>
+        <button onClick={() => setShowForm(!showForm)}
+                className="btn-primary">
+          <Plus size={16} /> Add Score
+        </button>
       </div>
 
-      {/* Subscription status banner */}
-      {subscription ? (
-        <div className="flex items-center gap-3 p-4 mb-8 rounded-xl bg-brand-500/10 border border-brand-500/20">
-          <CheckCircle size={18} className="text-brand-400 shrink-0" />
-          <div className="font-body text-sm">
-            <span className="text-brand-400 font-medium capitalize">{subscription.plan_type} plan active</span>
-            <span className="text-white/40 ml-2">
-              · Renews {subscription.current_period_end
-                ? format(new Date(subscription.current_period_end), 'dd MMM yyyy')
-                : 'automatically'}
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center gap-3 p-4 mb-8 rounded-xl bg-red-500/10 border border-red-500/20">
-          <AlertCircle size={18} className="text-red-400 shrink-0" />
-          <div className="font-body text-sm text-white/70">
-            No active subscription.{' '}
-            <Link to="/subscribe" className="text-brand-400 hover:underline">Subscribe now →</Link>
-          </div>
+      {/* Info banner */}
+      <div className="flex gap-3 p-4 mb-6 rounded-xl bg-blue-500/10 border border-blue-500/20">
+        <Info size={16} className="text-blue-400 shrink-0 mt-0.5" />
+        <p className="text-xs font-body text-white/50 leading-relaxed">
+          Your 5 most recent scores are used in monthly draws. Adding a 6th score automatically
+          removes the oldest. Stableford scores range from 1 to 45.
+        </p>
+      </div>
+
+      {/* Add score form */}
+      {showForm && (
+        <div className="card-glow p-6 mb-6 animate-slide-up">
+          <h3 className="font-display text-xl text-white mb-4">Add New Score</h3>
+          <form onSubmit={handleAdd} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-body text-white/50 mb-1.5 uppercase tracking-wide">
+                  Score (1–45)
+                </label>
+                <input type="number" min="1" max="45" required
+                       placeholder="e.g. 32"
+                       className="input-field font-mono text-lg"
+                       value={form.score}
+                       onChange={e => setForm(p => ({ ...p, score: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-body text-white/50 mb-1.5 uppercase tracking-wide">
+                  Date Played
+                </label>
+                <input type="date" required
+                       max={format(new Date(), 'yyyy-MM-dd')}
+                       className="input-field"
+                       value={form.date}
+                       onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-body text-white/50 mb-1.5 uppercase tracking-wide">
+                Notes (optional)
+              </label>
+              <input type="text" placeholder="e.g. Royal Birkdale, sunny day"
+                     className="input-field"
+                     value={form.notes}
+                     onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+            </div>
+
+            {/* Score preview */}
+            {form.score && !isNaN(parseInt(form.score)) && parseInt(form.score) >= 1 && parseInt(form.score) <= 45 && (
+              <div className="flex items-center gap-3 p-3 bg-white/3 rounded-xl">
+                <div className="font-mono text-3xl font-bold text-white">{form.score}</div>
+                <div>
+                  <div className={`text-sm font-body font-medium ${getScoreLabel(parseInt(form.score)).color}`}>
+                    {getScoreLabel(parseInt(form.score)).label}
+                  </div>
+                  <div className="text-xs font-body text-white/30">Stableford points</div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button type="submit" disabled={adding} className="btn-primary flex-1 justify-center">
+                {adding ? 'Saving…' : 'Save Score'}
+              </button>
+              <button type="button" onClick={() => setShowForm(false)} className="btn-secondary px-4">
+                Cancel
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
-      {/* Stats grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
-        <StatCard icon={Target}  label="Scores logged" value={scores.length} sub="of 5 max"
-                  color="bg-brand-600"  to="/dashboard/scores" />
-        <StatCard icon={Trophy}  label="Draws entered" value={entries.length}
-                  sub={nextDraw ? 'Next draw pending' : 'No upcoming draw'}
-                  color="bg-gold-600"   to="/dashboard/draws" />
-        <StatCard icon={Heart}   label="Charity"
-                  value={subscription?.charities?.name || '—'}
-                  sub={subscription ? `${subscription.charity_percentage}% of subscription` : 'Select a charity'}
-                  color="bg-pink-600"   to="/dashboard/charity" />
-        <StatCard icon={Award}   label="Total won"
-                  value={`£${totalWon.toFixed(2)}`}
-                  sub={pendingPay > 0 ? `${pendingPay} payout pending` : 'All clear'}
-                  color="bg-purple-600" to="/dashboard/winnings" />
-      </div>
-
-      {/* Recent scores */}
-      <div className="card-glow p-6 mb-6">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display text-xl text-white">Your last 5 scores</h2>
-          <Link to="/dashboard/scores" className="text-xs font-body text-brand-400 hover:underline flex items-center gap-1">
-            Manage <ArrowRight size={12} />
-          </Link>
+      {/* Score list */}
+      {loading ? (
+        <div className="space-y-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-20 card-glow animate-pulse" />
+          ))}
         </div>
-        {scores.length === 0 ? (
-          <div className="text-center py-8 text-white/30 font-body text-sm">
-            No scores logged yet.{' '}
-            <Link to="/dashboard/scores" className="text-brand-400 hover:underline">Add your first score →</Link>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {scores.map((score, i) => (
+      ) : scores.length === 0 ? (
+        <div className="card-glow p-12 text-center">
+          <Target size={32} className="text-white/20 mx-auto mb-4" />
+          <p className="font-body text-white/40 text-sm">
+            No scores logged yet. Add your first Stableford score above.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {scores.map((score, i) => {
+            const { label, color } = getScoreLabel(score.score)
+            return (
               <div key={score.id}
-                   className="flex items-center justify-between px-4 py-3 rounded-xl bg-white/3 border border-white/5">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-white/30 w-4">{i + 1}</span>
-                  <span className="font-mono font-bold text-xl text-white">{score.score}</span>
-                  <span className="text-xs font-body text-white/30">pts</span>
+                   className="card-glow p-4 flex items-center gap-4">
+                <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center
+                                font-mono text-xs text-white/40 shrink-0">
+                  {i + 1}
                 </div>
-                <span className="text-xs font-body text-white/40">
-                  {format(new Date(score.score_date), 'dd MMM yyyy')}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Recent draws */}
-      <div className="card-glow p-6">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display text-xl text-white">Recent draw results</h2>
-          <Link to="/dashboard/draws" className="text-xs font-body text-brand-400 hover:underline flex items-center gap-1">
-            View all <ArrowRight size={12} />
-          </Link>
-        </div>
-        {entries.length === 0 ? (
-          <div className="text-center py-8 text-white/30 font-body text-sm">
-            No draw history yet. You'll be entered automatically once your scores are logged.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {entries.slice(0, 3).map(entry => (
-              <div key={entry.id}
-                   className="flex items-center justify-between px-4 py-3 rounded-xl bg-white/3 border border-white/5">
-                <div>
-                  <div className="font-body text-sm text-white">{entry.draw_periods?.period_label}</div>
-                  <div className="text-xs font-body text-white/30 mt-0.5">
-                    Matched {entry.matched_count || 0} of 5 numbers
+                <div className="flex-1 flex items-center gap-4">
+                  <div className="font-mono font-bold text-3xl text-white w-16">{score.score}</div>
+                  <div>
+                    <div className={`text-sm font-body font-medium ${color}`}>{label}</div>
+                    <div className="text-xs font-body text-white/30">
+                      {format(new Date(score.score_date), 'EEEE, dd MMMM yyyy')}
+                    </div>
+                    {score.notes && (
+                      <div className="text-xs font-body text-white/30 mt-0.5 italic">{score.notes}</div>
+                    )}
                   </div>
                 </div>
-                <div className="text-right">
-                  {entry.match_type && entry.match_type !== 'no_match' ? (
-                    <div>
-                      <span className={`prize-badge-${entry.match_type === '5_match' ? '5' : entry.match_type === '4_match' ? '4' : '3'}`}>
-                        {entry.match_type.replace('_', ' ')}
-                      </span>
-                      <div className="text-xs font-mono text-brand-400 mt-1">£{entry.prize_amount?.toFixed(2)}</div>
-                    </div>
-                  ) : (
-                    <span className="text-xs font-body text-white/30">No match</span>
-                  )}
-                </div>
+                <button onClick={() => handleDelete(score.id)}
+                        className="p-2 rounded-lg text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                  <Trash2 size={15} />
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            )
+          })}
+
+          {/* Slots remaining */}
+          {scores.length < 5 && (
+            <div className="text-center py-4 text-xs font-body text-white/20">
+              {5 - scores.length} slot{5 - scores.length !== 1 ? 's' : ''} remaining
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

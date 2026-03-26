@@ -4,7 +4,7 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { Trophy, Heart, Target, ArrowRight, Star, CheckCircle } from 'lucide-react'
-import { getCharities, getPublishedDraws } from '../../lib/supabase'
+import { getCharities, getPublishedDraws } from '../lib/supabase'
 
 // Animated counter hook
 const useCounter = (target, duration = 1500) => {
