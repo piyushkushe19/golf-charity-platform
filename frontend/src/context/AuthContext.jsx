@@ -7,36 +7,55 @@ import { supabase } from '../lib/supabase'
 const AuthContext = createContext({})
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser]               = useState(null)
-  const [profile, setProfile]         = useState(null)
+  const [user, setUser]                 = useState(null)
+  const [profile, setProfile]           = useState(null)
   const [subscription, setSubscription] = useState(null)
-  const [loading, setLoading]         = useState(true)
+  const [loading, setLoading]           = useState(true)
 
-  // Fetch profile + subscription for a given user id
+  // Fetch profile + active subscription for a given user id
   const fetchUserData = async (userId) => {
-    const [{ data: profileData }, { data: subData }] = await Promise.all([
-      supabase.from('profiles').select('*').eq('id', userId).single(),
-      supabase.from('subscriptions')
-        .select('*, charities(*)')
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .maybeSingle(),
-    ])
-    setProfile(profileData)
-    setSubscription(subData)
+    try {
+      const [{ data: profileData }, { data: subData }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', userId).single(),
+        supabase
+          .from('subscriptions')
+          .select('*, charities(*)')
+          .eq('user_id', userId)
+          .eq('status', 'active')
+          .maybeSingle(),
+      ])
+      setProfile(profileData ?? null)
+      setSubscription(subData ?? null)
+    } catch (err) {
+      console.error('fetchUserData error:', err)
+      setProfile(null)
+      setSubscription(null)
+    }
   }
 
   useEffect(() => {
+    let mounted = true
+
     // Initial session check
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) fetchUserData(session.user.id)
-      setLoading(false)
-    })
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        if (!mounted) return
+        setUser(session?.user ?? null)
+        if (session?.user) {
+          return fetchUserData(session.user.id)
+        }
+      })
+      .catch((err) => {
+        console.error('getSession error:', err)
+      })
+      .finally(() => {
+        if (mounted) setLoading(false)
+      })
 
     // Listen for auth state changes (login, logout, token refresh)
     const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
+        if (!mounted) return
         setUser(session?.user ?? null)
         if (session?.user) {
           await fetchUserData(session.user.id)
@@ -48,10 +67,13 @@ export const AuthProvider = ({ children }) => {
       }
     )
 
-    return () => authSub.unsubscribe()
+    return () => {
+      mounted = false
+      authSub.unsubscribe()
+    }
   }, [])
 
-  const isAdmin = profile?.role === 'admin'
+  const isAdmin      = profile?.role === 'admin'
   const isSubscribed = subscription?.status === 'active'
 
   const refreshSubscription = () => {
