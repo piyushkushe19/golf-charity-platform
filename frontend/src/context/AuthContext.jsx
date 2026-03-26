@@ -1,9 +1,4 @@
 // src/context/AuthContext.jsx
-// Global auth state — wraps the entire app
-// Fixed: race condition between getSession + onAuthStateChange causing stuck loading
-// Fixed: fetchUserData must fully resolve before loading=false is set
-// Fixed: profile fetch uses maybeSingle() so it never throws on missing row
-
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
@@ -14,87 +9,103 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile]           = useState(null)
   const [subscription, setSubscription] = useState(null)
   const [loading, setLoading]           = useState(true)
-
-  // Ref to avoid duplicate initialisation from both getSession + onAuthStateChange
+  const [debugInfo, setDebugInfo]       = useState({})
   const initialised = useRef(false)
 
-  // ── Fetch profile + subscription ──────────────────────────────
-  // Uses maybeSingle() on profiles so it never throws PGRST116 (no rows)
   const fetchUserData = async (userId) => {
+    const debug = { userId, timestamp: new Date().toISOString() }
+
     try {
-      const [profileRes, subRes] = await Promise.all([
-        supabase
+      // Profile fetch
+      const profileRes = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle()
+
+      debug.profileError  = profileRes.error?.message || null
+      debug.profileStatus = profileRes.status
+      debug.profileData   = profileRes.data
+
+      console.log('Profile fetch result:', JSON.stringify(profileRes, null, 2))
+
+      if (profileRes.data) {
+        setProfile(profileRes.data)
+      } else if (!profileRes.data && !profileRes.error) {
+        // Row missing — create it on the fly
+        console.warn('Profile row missing — creating now...')
+        const { data: { user: currentUser } } = await supabase.auth.getUser()
+        const insertRes = await supabase
           .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle(),          // ← was .single(), which throws if no row
-        supabase
-          .from('subscriptions')
-          .select('*, charities(*)')
-          .eq('user_id', userId)
-          .eq('status', 'active')
-          .maybeSingle(),
-      ])
+          .insert({
+            id:        userId,
+            email:     currentUser?.email || '',
+            full_name: currentUser?.user_metadata?.full_name || '',
+            role:      'subscriber',
+          })
+          .select()
+          .single()
+        debug.insertError = insertRes.error?.message || null
+        debug.insertData  = insertRes.data
+        console.log('Profile insert result:', JSON.stringify(insertRes, null, 2))
+        setProfile(insertRes.data ?? null)
+      } else {
+        console.error('Profile fetch blocked (likely RLS):', profileRes.error)
+        setProfile(null)
+      }
 
-      if (profileRes.error) console.error('Profile fetch error:', profileRes.error)
-      if (subRes.error)     console.error('Subscription fetch error:', subRes.error)
+      // Subscription fetch
+      const subRes = await supabase
+        .from('subscriptions')
+        .select('*, charities(*)')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .maybeSingle()
 
-      setProfile(profileRes.data ?? null)
+      debug.subError = subRes.error?.message || null
       setSubscription(subRes.data ?? null)
 
-      // Debug helper — remove after confirming admin works
-      console.log('✅ Profile loaded:', profileRes.data)
-      console.log('✅ Role:', profileRes.data?.role)
     } catch (err) {
-      console.error('fetchUserData unexpected error:', err)
+      debug.exception = err.message
+      console.error('fetchUserData exception:', err)
       setProfile(null)
       setSubscription(null)
     }
+
+    setDebugInfo(debug)
   }
 
-  // ── Initialise from a session object ─────────────────────────
-  // This is the single source of truth for setting all state + loading=false
   const initialiseFromSession = async (session) => {
     const currentUser = session?.user ?? null
     setUser(currentUser)
-
     if (currentUser) {
-      await fetchUserData(currentUser.id)   // ← await ensures profile is set BEFORE loading=false
+      await fetchUserData(currentUser.id)
     } else {
       setProfile(null)
       setSubscription(null)
     }
-
     setLoading(false)
   }
 
   useEffect(() => {
-    // ── Step 1: set up the auth listener FIRST ─────────────────
-    // onAuthStateChange fires for SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, etc.
     const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         if (!initialised.current) {
-          // First fire — use this to initialise (skip getSession below)
           initialised.current = true
           await initialiseFromSession(session)
         } else {
-          // Subsequent fires (logout, token refresh, etc.)
           await initialiseFromSession(session)
         }
       }
     )
 
-    // ── Step 2: getSession as fallback if listener doesn't fire ─
-    // In some environments onAuthStateChange doesn't fire on first load
-    // so we also call getSession with a short timeout as a safety net
     const fallbackTimer = setTimeout(async () => {
       if (!initialised.current) {
-        console.warn('Auth listener did not fire — using getSession fallback')
         initialised.current = true
         const { data: { session } } = await supabase.auth.getSession()
         await initialiseFromSession(session)
       }
-    }, 1500)  // 1.5s fallback — if listener fires first this is cancelled
+    }, 1500)
 
     return () => {
       clearTimeout(fallbackTimer)
@@ -112,7 +123,7 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={{
       user, profile, subscription, loading,
-      isAdmin, isSubscribed, refreshSubscription,
+      isAdmin, isSubscribed, refreshSubscription, debugInfo,
     }}>
       {children}
     </AuthContext.Provider>
