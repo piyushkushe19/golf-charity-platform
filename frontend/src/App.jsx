@@ -82,21 +82,70 @@ const RequireAuth = () => {
 }
 
 // Guard: must be logged in AND have active subscription
-// Uses Layout as the shell so the nav/footer still render
 const RequireSubscription = () => {
   const { user, isSubscribed, loading } = useAuth()
   if (loading) return <LoadingScreen />
   if (!user) return <Navigate to="/login" replace />
   if (!isSubscribed) return <Navigate to="/subscribe" replace />
-  return <Layout />   // renders <Outlet /> inside Layout
+  return <Layout />
 }
 
 // Guard: must be admin
+// Shows a clear error message if logged in but not admin, instead of redirecting
 const RequireAdmin = () => {
-  const { user, isAdmin, loading } = useAuth()
+  const { user, profile, isAdmin, loading } = useAuth()
+
   if (loading) return <LoadingScreen />
+
   if (!user) return <Navigate to="/login" replace />
-  if (!isAdmin) return <Navigate to="/dashboard" replace />
+
+  // User is logged in but profile hasn't loaded yet (shouldn't happen, but safety net)
+  if (user && !profile) {
+    return (
+      <div className="min-h-screen bg-dark-900 flex items-center justify-center px-4">
+        <div className="max-w-md text-center card-glow p-8">
+          <div className="text-4xl mb-4">🔄</div>
+          <h2 className="font-display text-xl text-white mb-3">Loading your profile…</h2>
+          <p className="font-body text-sm text-white/50 mb-4">
+            If this persists, your profile row may be missing from the database.
+          </p>
+          <p className="font-mono text-xs text-white/30 bg-white/5 p-3 rounded-lg text-left">
+            Run in Supabase SQL Editor:<br />
+            SELECT * FROM profiles WHERE id = '{user.id}';
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // Profile loaded but role is not admin
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-dark-900 flex items-center justify-center px-4">
+        <div className="max-w-md text-center card-glow p-8">
+          <div className="text-4xl mb-4">🚫</div>
+          <h2 className="font-display text-xl text-white mb-3">Not an admin</h2>
+          <p className="font-body text-sm text-white/50 mb-4">
+            Your account <span className="text-brand-400">{user.email}</span> has role:{' '}
+            <span className="font-mono text-gold-400">"{profile?.role || 'unknown'}"</span>
+          </p>
+          <p className="font-body text-xs text-white/30 mb-6">
+            To fix: run this in Supabase SQL Editor:
+          </p>
+          <pre className="font-mono text-xs text-brand-400 bg-dark-700 p-3 rounded-lg text-left mb-6 overflow-x-auto">
+{`UPDATE public.profiles 
+SET role = 'admin' 
+WHERE email = '${user.email}';`}
+          </pre>
+          <p className="font-body text-xs text-white/30 mb-4">
+            Then sign out and sign back in for the change to take effect.
+          </p>
+          <a href="/" className="btn-secondary text-sm">← Back to Home</a>
+        </div>
+      </div>
+    )
+  }
+
   return <AdminLayout />
 }
 
