@@ -1,7 +1,7 @@
 // src/components/layout/AdminLayout.jsx
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { signOut } from '../../lib/supabase'
+import { supabase } from '../../lib/supabase'
 import { LayoutDashboard, Users, Trophy, Heart, Award, LogOut, ChevronRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -19,7 +19,7 @@ export default function AdminLayout() {
   const location = useLocation()
 
   const handleSignOut = async () => {
-    await signOut()
+    await supabase.auth.signOut()
     toast.success('Signed out')
     navigate('/')
   }
